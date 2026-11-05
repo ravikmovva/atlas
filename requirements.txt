@@ -1,0 +1,7 @@
+numpy
+opencv-python-headless
+scikit-image
+scipy
+matplotlib
+pytest
+# optional: torch torchvision  (for --flow raft)

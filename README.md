@@ -17,6 +17,8 @@ For a reference clip `R` and reconstruction `X`:
 3. **Backward warp.** Pull `X(t+1)` back into frame `t`'s grid along `F`. Pulling (rather than pushing) gives every pixel exactly one value, with no holes or collisions.
 4. **Warping error.** `E_t = mean over trusted pixels |X(t) − warp(X(t+1))|`. The same quantity computed on `R` itself is the **reference floor**: the residual that interpolation and flow error leave even for a perfect reconstruction. Results are reported raw and as a ratio to this floor.
 
+**Prior work.** The warping-error measurement is not new. It follows Lai et al., *Learning Blind Video Temporal Consistency* (ECCV 2018), which warps output frames using flow from the input video and masks occlusions in the same way. Related temporal metrics include tOF and tLPIPS (Chu et al., TecoGAN, 2020). Atlas contributes the evaluation design around the measurement: PSNR-matched comparisons, a reference-floor control, flow validated against ground-truth motion, a second flow method as a cross-check, an ablation of where flow is measured, and an explicit blind-spot test.
+
 **Why flow from the reference.** Flicker breaks brightness constancy, the assumption optical flow is built on. Estimating motion on the output means the thing being measured changes the instrument. In particular, the trust mask then covers a different set of pixels for each model under test. With the reference's motion, every reconstruction is scored on the same pixels against the same motion.
 
 ## Experiment
@@ -64,6 +66,29 @@ Stable-but-wrong passes. Atlas is a complement to a reference metric, not a repl
 - **No subjective study.** Agreement with human flicker judgments has not been measured. The way to establish it is the VMAF approach: subjective scores on a graded set, then fit and validate.
 - **Reference required.** For outputs with no reference (e.g. novel-view synthesis at unseen viewpoints), flow has to come from the output itself. The ablation above shows what that costs.
 
+## Running it on a real tokenizer
+
+`scripts/run_tokenizer.py` encodes and decodes one real clip with a video tokenizer, then reports:
+
+- the reconstruction's PSNR, SSIM and warping error
+- a **blur control bisected to the same PSNR**, so the ratio carries the same meaning as in the synthetic experiment
+- a **seam test**: is the warping error higher on frame pairs that cross the tokenizer's latent-chunk boundaries (a causal 4× temporal tokenizer chunks frames as [0], [1–4], [5–8], …)? This uses a permutation test, so a small clip still yields an honest p-value.
+
+```bash
+# Wan 2.1 VAE (the tokenizer Cosmos-Predict2 builds on)
+pip install torch torchvision diffusers transformers accelerate
+python scripts/run_tokenizer.py --video my_clip.mp4 --backend wan21 --flow raft
+
+# NVIDIA Cosmos-0.1 causal video tokenizer (TorchScript)
+huggingface-cli download nvidia/Cosmos-0.1-Tokenizer-CV4x8x8 --local-dir ckpts/CV4x8x8
+python scripts/run_tokenizer.py --video my_clip.mp4 --backend cosmos-jit --ckpt ckpts/CV4x8x8 --flow raft
+
+# plumbing check: fake chunked tokenizer, no GPU or network needed
+python scripts/run_tokenizer.py --video my_clip.mp4 --backend selftest --flow dis
+```
+
+Defaults are 33 frames at 320×512, sized for a 12 GB GPU. Use a clip with real camera motion. If pairs move less than about a pixel, use `--stride 2`. On the self-test, the seam test flags the injected chunk boundaries (boundary/interior excess 1.3×, p ≈ 0.002). That check confirms the plumbing, not a property of any real model.
+
 ## Reproduce
 
 ```bash
@@ -81,7 +106,9 @@ atlas/warp.py      backward warp, forward-backward trust mask
 atlas/metrics.py   PSNR, SSIM, reference motion, warping-error curve
 atlas/degrade.py   consistent / inconsistent / consistent-but-wrong degradations, PSNR matching
 atlas/synth.py     ground-truth-motion test sequences
-scripts/run_experiment.py
+scripts/run_experiment.py   synthetic PSNR-matched experiment
+scripts/run_tokenizer.py    real tokenizer: matched blur control + latent-seam test
+scripts/concept_sheets.py   explanatory figures
 tests/             instrument checks (warp with GT flow, flow EPE, mask, PSNR matching)
 ```
 
